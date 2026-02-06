@@ -1,0 +1,35 @@
+# ---- Spin-wave parameters (meV) ----
+S = 1.0
+J1 = 1.80
+J2 = -4.30
+
+# ---- Q component magnitudes (Å^-1) ----
+Q_110 = 1.82016
+Q_1m10 = 1.05087
+Q_001 = 0.49986
+
+# ---- Instrument / measurable region ----
+Ef = 4.0
+Ei_max = 18.0
+two_theta_max_deg = 115.0
+
+# ---- Path sampling ranges ----
+H_min = 0.0
+H_max = 1.0
+n_H = 600
+
+K_min = -0.5
+K_max = 0.5
+n_K = 600
+
+L_min = 0.0
+L_max = 2.0
+n_L = 600
+
+# ---- Kinematics overlay grid ----
+E_grid_max = 14.0
+n_Egrid = 800
+
+# ---- Output ----
+outdir = "./figures"
+show = 1
