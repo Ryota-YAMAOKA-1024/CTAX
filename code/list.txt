@@ -11,6 +11,7 @@ Q_001 = 0.49986
 # ---- Instrument / measurable region ----
 Ef = 4.0
 Ei_max = 18.0
+two_theta_min_deg = 5.0
 two_theta_max_deg = 115.0
 
 # ---- Path sampling ranges ----

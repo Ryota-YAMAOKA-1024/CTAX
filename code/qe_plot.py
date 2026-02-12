@@ -140,73 +140,228 @@ def make_energy_grid(Emax: float, n: int = 800) -> np.ndarray:
     return np.linspace(0.0, float(Emax), int(n))
 
 
+def energy_from_path_coord(
+    x_eval: np.ndarray, x_curve: np.ndarray, E_grid: np.ndarray
+) -> np.ndarray:
+    """
+    Interpolate E(x) from a sampled monotonic x(E) curve.
+    Returns NaN outside the sampled x domain.
+    """
+    valid = np.isfinite(x_curve) & np.isfinite(E_grid)
+    if not np.any(valid):
+        return np.full_like(x_eval, np.nan, dtype=float)
+
+    x_valid = x_curve[valid]
+    E_valid = E_grid[valid]
+    order = np.argsort(x_valid)
+    x_sorted = x_valid[order]
+    E_sorted = E_valid[order]
+
+    uniq_x, uniq_idx = np.unique(x_sorted, return_index=True)
+    uniq_E = E_sorted[uniq_idx]
+    if uniq_x.size < 2:
+        return np.full_like(x_eval, np.nan, dtype=float)
+
+    return np.interp(x_eval, uniq_x, uniq_E, left=np.nan, right=np.nan)
+
+
 def plot_path(
     ax,
     x_path: np.ndarray,
     x_label: str,
-    Q_path: np.ndarray,
     E_path: np.ndarray,
     E_grid: np.ndarray,
     Q_low: np.ndarray,
     Q_high: np.ndarray,
+    Q_scale: float,
+    two_theta_min_deg: float,
+    two_theta_max_deg: float,
     title: str,
 ):
-    """Plot dispersion vs. path parameter with Q-based kinematics on a twin axis."""
-    (spin_line,) = ax.plot(x_path, E_path, label="spin-wave dispersion")
+    """Plot dispersion vs. path parameter for linear path Q(x)=|Q_scale*x| (e.g. HH0)."""
+    x_abs_low = Q_low / abs(Q_scale)
+    x_abs_high = Q_high / abs(Q_scale)
+    x_abs = np.abs(x_path)
+    E_top = energy_from_path_coord(x_abs, x_abs_low, E_grid)
+    upper_in_view = np.any(
+        np.isfinite(x_abs_high)
+        & (x_abs_high >= np.nanmin(x_abs))
+        & (x_abs_high <= np.nanmax(x_abs))
+    )
+    if upper_in_view:
+        E_bottom = energy_from_path_coord(x_abs, x_abs_high, E_grid)
+    else:
+        E_bottom = np.zeros_like(x_path, dtype=float)
+    region_mask = np.isfinite(E_top) & np.isfinite(E_bottom) & (E_top >= E_bottom)
+    region = ax.fill_between(
+        x_path,
+        E_bottom,
+        E_top,
+        where=region_mask,
+        alpha=0.15,
+        color="tab:green",
+        label="measurable region",
+        zorder=1,
+    )
+    (spin_line,) = ax.plot(x_path, E_path, label="spin-wave dispersion", zorder=3)
+    (low_line,) = ax.plot(
+        x_abs_low,
+        E_grid,
+        label=f"kinematics lower (2θ={two_theta_min_deg:g}°)",
+        color="tab:orange",
+        linewidth=2.0,
+        zorder=4,
+    )
+    (high_line,) = ax.plot(
+        x_abs_high,
+        E_grid,
+        label=f"kinematics upper (2θ={two_theta_max_deg:g}°)",
+        color="tab:green",
+        linewidth=2.0,
+        zorder=5,
+    )
 
     ax.set_title(title)
     ax.set_xlabel(x_label)
     ax.set_ylabel("Energy transfer E (meV)")
+    ax.set_xlim(float(np.nanmin(x_path)), float(np.nanmax(x_path)))
     ax.grid(True, alpha=0.3)
 
+    # Top Q-axis reference for the plotted path.
     ax_q = ax.twiny()
     ax_q.patch.set_alpha(0.0)
+    ax_q.set_xlim(ax.get_xlim())
+    xticks = ax.get_xticks()
+    q_ticks = abs(Q_scale) * np.abs(xticks)
+    ax_q.set_xticks(xticks)
+    ax_q.set_xticklabels([f"{q:.2f}" for q in q_ticks])
+    ax_q.set_xlabel(r"$Q\ (\AA^{-1})$")
 
-    (low_line,) = ax_q.plot(
-        Q_low,
-        E_grid,
-        label="kinematics lower (2θ=0°)",
-        color="tab:orange",
+    ax.legend([spin_line, low_line, high_line, region], [
+        "spin-wave dispersion",
+        f"kinematics lower (2θ={two_theta_min_deg:g}°)",
+        f"kinematics upper (2θ={two_theta_max_deg:g}°)",
+        "measurable region",
+    ], loc="best")
+
+
+def qedge_to_abs_path(
+    Q_edge: np.ndarray, Q_center: float, Q_scale: float
+) -> np.ndarray:
+    """
+    Invert Q(x)^2 = Q_center^2 + (Q_scale * x)^2 into |x|(Q_edge).
+    """
+    delta = Q_edge * Q_edge - Q_center * Q_center
+    delta = np.where(delta >= 0.0, delta, np.nan)
+    return np.sqrt(delta) / abs(Q_scale)
+
+
+def plot_symmetric_path(
+    ax,
+    x_path: np.ndarray,
+    x_label: str,
+    E_path: np.ndarray,
+    E_grid: np.ndarray,
+    Q_low: np.ndarray,
+    Q_high: np.ndarray,
+    Q_center: float,
+    Q_scale: float,
+    two_theta_min_deg: float,
+    two_theta_max_deg: float,
+    title: str,
+):
+    """
+    Plot dispersion vs. symmetric path parameter (K/L) where
+    Q(x)^2 = Q_center^2 + (Q_scale*x)^2.
+    """
+    x_abs_low = qedge_to_abs_path(Q_low, Q_center=Q_center, Q_scale=Q_scale)
+    x_abs_high = qedge_to_abs_path(Q_high, Q_center=Q_center, Q_scale=Q_scale)
+    x_abs = np.abs(x_path)
+    E_top = energy_from_path_coord(x_abs, x_abs_low, E_grid)
+    upper_in_view = np.any(
+        np.isfinite(x_abs_high)
+        & (x_abs_high >= np.nanmin(x_abs))
+        & (x_abs_high <= np.nanmax(x_abs))
     )
-    (high_line,) = ax_q.plot(
-        Q_high,
-        E_grid,
-        label="kinematics upper (2θ=2θ_max)",
-        color="tab:green",
-    )
-    region = ax_q.fill_betweenx(
-        E_grid,
-        Q_low,
-        Q_high,
+    if upper_in_view:
+        E_bottom = energy_from_path_coord(x_abs, x_abs_high, E_grid)
+    else:
+        E_bottom = np.zeros_like(x_path, dtype=float)
+    region_mask = np.isfinite(E_top) & np.isfinite(E_bottom) & (E_top >= E_bottom)
+    region = ax.fill_between(
+        x_path,
+        E_bottom,
+        E_top,
+        where=region_mask,
         alpha=0.15,
         color="tab:green",
         label="measurable region",
+        zorder=1,
     )
+    (spin_line,) = ax.plot(x_path, E_path, label="spin-wave dispersion", zorder=3)
+    (low_line,) = ax.plot(
+        x_abs_low,
+        E_grid,
+        color="tab:orange",
+        label=f"kinematics lower (2θ={two_theta_min_deg:g}°)",
+        linewidth=2.0,
+        zorder=4,
+    )
+    (high_line,) = ax.plot(
+        x_abs_high,
+        E_grid,
+        color="tab:green",
+        label=f"kinematics upper (2θ={two_theta_max_deg:g}°)",
+        linewidth=2.0,
+        zorder=5,
+    )
+    ax.plot(-x_abs_low, E_grid, color="tab:orange", alpha=0.7, linewidth=2.0, zorder=4)
+    ax.plot(-x_abs_high, E_grid, color="tab:green", alpha=0.7, linewidth=2.0, zorder=5)
 
-    finite_low = (
-        np.nanmin(Q_low[np.isfinite(Q_low)]) if np.any(np.isfinite(Q_low)) else 0.0
-    )
-    finite_high = (
-        np.nanmax(Q_high[np.isfinite(Q_high)]) if np.any(np.isfinite(Q_high)) else 1.0
-    )
-    ax_q.set_xlim(finite_low, finite_high)
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Energy transfer E (meV)")
+    ax.set_xlim(float(np.nanmin(x_path)), float(np.nanmax(x_path)))
+    ax.grid(True, alpha=0.3)
+
+    # Add a top Q-axis as reference (symmetric in ±x, using |x|).
+    ax_q = ax.twiny()
+    ax_q.patch.set_alpha(0.0)
+    ax_q.set_xlim(ax.get_xlim())
+    xticks = ax.get_xticks()
+    q_ticks = np.sqrt(Q_center * Q_center + (Q_scale * np.abs(xticks)) ** 2)
+    ax_q.set_xticks(xticks)
+    ax_q.set_xticklabels([f"{q:.2f}" for q in q_ticks])
     ax_q.set_xlabel(r"$Q\ (\AA^{-1})$")
 
-    handles, labels = ax.get_legend_handles_labels()
-    handles_q = [low_line, high_line, region]
-    labels_q = [h.get_label() for h in handles_q]
-    ax.legend(handles + handles_q, labels + labels_q, loc="best")
+    ax.legend([spin_line, low_line, high_line, region], [
+        "spin-wave dispersion",
+        f"kinematics lower (2θ={two_theta_min_deg:g}°)",
+        f"kinematics upper (2θ={two_theta_max_deg:g}°)",
+        "measurable region",
+    ], loc="best")
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python qe_plot.py list.txt")
-        sys.exit(1)
+    default_param_path = SCRIPT_DIR / "list.txt"
+    if len(sys.argv) >= 2 and sys.argv[1] in ("-h", "--help"):
+        print("Usage: python code/qe_plot.py [path/to/list.txt]")
+        print(f"If omitted, default is: {default_param_path}")
+        sys.exit(0)
 
-    params = load_params_list_txt(sys.argv[1])
+    if len(sys.argv) < 2:
+        param_path = default_param_path
+        print(f"No parameter file specified. Using default: {param_path}")
+    else:
+        param_path = Path(sys.argv[1])
+
+    params = load_params_list_txt(str(param_path))
 
     # Required physics params
-    require(params, ["S", "J1", "J2", "Ef", "Ei_max", "two_theta_max_deg"])
+    require(
+        params,
+        ["S", "J1", "J2", "Ef", "Ei_max", "two_theta_min_deg", "two_theta_max_deg"],
+    )
     require(params, ["Q_110", "Q_1m10", "Q_001"])
 
     S = float(params["S"])
@@ -215,6 +370,7 @@ def main():
 
     Ef = float(params["Ef"])  # meV
     Ei_max = float(params["Ei_max"])  # meV
+    two_theta_min = float(params["two_theta_min_deg"])  # deg
     two_theta_max = float(params["two_theta_max_deg"])  # deg
     Q_110 = float(params["Q_110"])
     Q_1m10 = float(params["Q_1m10"])
@@ -248,8 +404,16 @@ def main():
     E_grid_max = min(E_grid_max, E_transfer_max) if E_transfer_max > 0 else E_grid_max
     E_grid = make_energy_grid(E_grid_max, int(params.get("n_Egrid", 800)))
 
-    Q_low = kinematics_Q(E_grid, Ef=Ef, two_theta_deg=0.0)
+    Q_low = kinematics_Q(E_grid, Ef=Ef, two_theta_deg=two_theta_min)
     Q_high = kinematics_Q(E_grid, Ef=Ef, two_theta_deg=two_theta_max)
+    Q_center = q_to_Qmag(
+        np.array([1.0 / 3.0]),
+        np.array([1.0 / 3.0]),
+        np.array([0.0]),
+        Q_110,
+        Q_1m10,
+        Q_001,
+    )[0]
 
     outdir_raw = str(params.get("outdir", ".")).strip()
     outdir_path = Path(outdir_raw).expanduser()
@@ -261,18 +425,18 @@ def main():
     H = np.linspace(H_min, H_max, n_H)
     h1, k1, l1 = H, H, np.zeros_like(H)
     E1 = magnon_energy_meV(h1, k1, l1, S=S, J1=J1, J2=J2)
-    Q1 = q_to_Qmag(h1, k1, l1, Q_110, Q_1m10, Q_001)
-
     fig, ax = plt.subplots()
     plot_path(
         ax,
         H,
         "(H,H,0)",
-        Q1,
         E1,
         E_grid,
         Q_low,
         Q_high,
+        Q_scale=Q_110,
+        two_theta_min_deg=two_theta_min,
+        two_theta_max_deg=two_theta_max,
         title="Dispersion along (H,H,0)",
     )
     fig.tight_layout()
@@ -284,18 +448,19 @@ def main():
     k2 = (1.0 / 3.0) - K
     l2 = np.zeros_like(K)
     E2 = magnon_energy_meV(h2, k2, l2, S=S, J1=J1, J2=J2)
-    Q2 = q_to_Qmag(h2, k2, l2, Q_110, Q_1m10, Q_001)
-
     fig, ax = plt.subplots()
-    plot_path(
+    plot_symmetric_path(
         ax,
         K,
         "(1/3+K, 1/3−K, 0)",
-        Q2,
         E2,
         E_grid,
         Q_low,
         Q_high,
+        Q_center=Q_center,
+        Q_scale=Q_1m10,
+        two_theta_min_deg=two_theta_min,
+        two_theta_max_deg=two_theta_max,
         title="Dispersion along (1/3+K, 1/3−K, 0)",
     )
     fig.tight_layout()
@@ -307,18 +472,19 @@ def main():
     k3 = np.full_like(L, 1.0 / 3.0)
     l3 = L
     E3 = magnon_energy_meV(h3, k3, l3, S=S, J1=J1, J2=J2)
-    Q3 = q_to_Qmag(h3, k3, l3, Q_110, Q_1m10, Q_001)
-
     fig, ax = plt.subplots()
-    plot_path(
+    plot_symmetric_path(
         ax,
         L,
         "(1/3, 1/3, L)",
-        Q3,
         E3,
         E_grid,
         Q_low,
         Q_high,
+        Q_center=Q_center,
+        Q_scale=Q_001,
+        two_theta_min_deg=two_theta_min,
+        two_theta_max_deg=two_theta_max,
         title="Dispersion along (1/3, 1/3, L)",
     )
     fig.tight_layout()
