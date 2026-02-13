@@ -19,8 +19,8 @@ H_min = 0.0
 H_max = 1.0
 n_H = 600
 
-K_min = -0.5
-K_max = 0.5
+K_min = -0.75
+K_max = 0.75
 n_K = 600
 
 L_min = -0.5
