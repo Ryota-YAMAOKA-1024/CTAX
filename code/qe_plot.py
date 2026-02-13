@@ -141,7 +141,11 @@ def make_energy_grid(Emax: float, n: int = 800) -> np.ndarray:
 
 
 def energy_from_path_coord(
-    x_eval: np.ndarray, x_curve: np.ndarray, E_grid: np.ndarray
+    x_eval: np.ndarray,
+    x_curve: np.ndarray,
+    E_grid: np.ndarray,
+    left_value: float = np.nan,
+    right_value: float = np.nan,
 ) -> np.ndarray:
     """
     Interpolate E(x) from a sampled monotonic x(E) curve.
@@ -162,7 +166,7 @@ def energy_from_path_coord(
     if uniq_x.size < 2:
         return np.full_like(x_eval, np.nan, dtype=float)
 
-    return np.interp(x_eval, uniq_x, uniq_E, left=np.nan, right=np.nan)
+    return np.interp(x_eval, uniq_x, uniq_E, left=left_value, right=right_value)
 
 
 def plot_path(
@@ -277,7 +281,16 @@ def plot_symmetric_path(
     x_abs_low = qedge_to_abs_path(Q_low, Q_center=Q_center, Q_scale=Q_scale)
     x_abs_high = qedge_to_abs_path(Q_high, Q_center=Q_center, Q_scale=Q_scale)
     x_abs = np.abs(x_path)
-    E_top = energy_from_path_coord(x_abs, x_abs_low, E_grid)
+    valid_low = np.isfinite(x_abs_low) & np.isfinite(E_grid)
+    if np.any(valid_low):
+        # For |x| below the sampled lower-edge domain, keep the threshold energy
+        # so the measurable region spans E=0 to the lower edge at the center.
+        left_energy_low = float(np.nanmin(E_grid[valid_low]))
+    else:
+        left_energy_low = np.nan
+    E_top = energy_from_path_coord(
+        x_abs, x_abs_low, E_grid, left_value=left_energy_low, right_value=np.nan
+    )
     upper_in_view = np.any(
         np.isfinite(x_abs_high)
         & (x_abs_high >= np.nanmin(x_abs))
@@ -299,14 +312,23 @@ def plot_symmetric_path(
         zorder=1,
     )
     (spin_line,) = ax.plot(x_path, E_path, label="spin-wave dispersion", zorder=3)
-    (low_line,) = ax.plot(
-        x_abs_low,
-        E_grid,
+    low_plot_kwargs = dict(
         color="tab:orange",
         label=f"kinematics lower (2θ={two_theta_min_deg:g}°)",
         linewidth=2.0,
         zorder=4,
     )
+    if np.any(valid_low):
+        low_x_valid = x_abs_low[valid_low]
+        low_E_valid = E_grid[valid_low]
+        # Build one connected polyline: (-branch) -> center cusp -> (+branch).
+        low_x_conn = np.concatenate((-low_x_valid[::-1], np.array([0.0]), low_x_valid))
+        low_E_conn = np.concatenate(
+            (low_E_valid[::-1], np.array([left_energy_low]), low_E_valid)
+        )
+        (low_line,) = ax.plot(low_x_conn, low_E_conn, **low_plot_kwargs)
+    else:
+        (low_line,) = ax.plot([], [], **low_plot_kwargs)
     (high_line,) = ax.plot(
         x_abs_high,
         E_grid,
@@ -315,7 +337,6 @@ def plot_symmetric_path(
         linewidth=2.0,
         zorder=5,
     )
-    ax.plot(-x_abs_low, E_grid, color="tab:orange", alpha=0.7, linewidth=2.0, zorder=4)
     ax.plot(-x_abs_high, E_grid, color="tab:green", alpha=0.7, linewidth=2.0, zorder=5)
 
     ax.set_title(title)
